@@ -1,3 +1,11 @@
+saejieba
+========
+适用于新浪SAE云平台的结巴分词。
+* 主要修改：
+    * 将jieba.cache改为存放在SAE Storage中。
+    * 将dict.txt改为存放在SAE Storage中。
+
+以下是原作者的README
 jieba
 ========
 "结巴"中文分词：做最好的Python中文分词组件
