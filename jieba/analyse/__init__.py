@@ -1,13 +1,16 @@
 import jieba
 import os
+from sae.storage import Bucket
+from django.conf import settings
 try:
-    from analyzer import ChineseAnalyzer
+	from analyzer import ChineseAnalyzer
 except ImportError:
-    pass
+	pass
 
-_curpath=os.path.normpath( os.path.join( os.getcwd(), os.path.dirname(__file__) )  )
-f_name = os.path.join(_curpath,"idf.txt")
-content = open(f_name,'rb').read().decode('utf-8')
+# SAE storage
+default_bucket = getattr(settings, 'STORAGE_BUCKET_NAME')
+bucket = Bucket(default_bucket)
+content = bucket.get_object_contents('idf.txt')
 
 idf_freq = {}
 lines = content.split('\n')

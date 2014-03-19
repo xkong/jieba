@@ -15,6 +15,10 @@ import threading
 from functools import wraps
 import logging
 
+# For SAE use only
+from django.conf import settings
+from sae.storage import Bucket
+
 DICTIONARY = "dict.txt"
 DICT_LOCK = threading.RLock()
 trie = None # to be initialized
@@ -34,28 +38,27 @@ def setLogLevel(log_level):
     global logger
     logger.setLevel(log_level)
 
-def gen_trie(f_name):
+def gen_trie(f_content):
     lfreq = {}
     trie = {}
     ltotal = 0.0
-    with open(f_name, 'rb') as f:
-        lineno = 0 
-        for line in f.read().rstrip().decode('utf-8').split('\n'):
-            lineno += 1
-            try:
-                word,freq,_ = line.split(' ')
-                freq = float(freq)
-                lfreq[word] = freq
-                ltotal+=freq
-                p = trie
-                for c in word:
-                    if c not in p:
-                        p[c] ={}
-                    p = p[c]
-                p['']='' #ending flag
-            except ValueError, e:
-                logger.debug('%s at line %s %s' % (f_name,  lineno, line))
-                raise ValueError, e
+    lineno = 0
+    for line in f_content.rstrip().decode('utf-8').split('\n'):
+        lineno += 1
+        try:
+            word,freq,_ = line.split(' ')
+            freq = float(freq)
+            lfreq[word] = freq
+            ltotal+=freq
+            p = trie
+            for c in word:
+                if c not in p:
+                    p[c] ={}
+                p = p[c]
+            p['']='' #ending flag
+        except ValueError, e:
+            logger.debug('Failed at line %s %s' % (lineno, line))
+            raise ValueError, e
     return trie, lfreq,ltotal
 
 def initialize(*args):
@@ -70,40 +73,46 @@ def initialize(*args):
         if trie:
             del trie
             trie = None
-        _curpath=os.path.normpath( os.path.join( os.getcwd(), os.path.dirname(__file__) )  )
 
-        abs_path = os.path.join(_curpath,dictionary)
-        logger.debug("Building Trie..., from %s" % abs_path)
         t1 = time.time()
-        if abs_path == os.path.join(_curpath,"dict.txt"): #defautl dictionary
-            cache_file = os.path.join(tempfile.gettempdir(),"jieba.cache")
-        else: #customer dictionary
-            cache_file = os.path.join(tempfile.gettempdir(),"jieba.user."+str(hash(abs_path))+".cache")
+
+        cache_file = 'jieba.cache'
+        default_dict = dictionary
+        default_bucket = getattr(settings, 'STORAGE_BUCKET_NAME')
+        bucket = Bucket(default_bucket)
+
+        cache_file_content = bucket.get_object_contents(dictionary)
+        dict_stamp = bucket.stat_object(default_dict)['timestamp']
 
         load_from_cache_fail = True
-        if os.path.exists(cache_file) and os.path.getmtime(cache_file)>os.path.getmtime(abs_path):
-            logger.debug("loading model from cache %s" % cache_file)
-            try:
-                trie,FREQ,total,min_freq = marshal.load(open(cache_file,'rb'))
-                load_from_cache_fail = False
-            except:
-                load_from_cache_fail = True
+        try:
+            cache_stamp = bucket.stat_object(cache_file)['timestamp']
+        except:
+            cache_exists = False
+        else:
+            if cache_stamp > dict_stamp:
+                logger.debug("loading model from cache %s" % cache_file)
+                try:
+                    cache_content = bucket.get_object_contents(cache_file)
+                    trie,FREQ,total,min_freq = marshal.loads(cache_content)
+                    load_from_cache_fail = False
+                except:
+                    load_from_cache_fail = True
 
         if load_from_cache_fail:
-            trie,FREQ,total = gen_trie(abs_path)
+            trie,FREQ,total = gen_trie(cache_file_content)
             FREQ = dict([(k,log(float(v)/total)) for k,v in FREQ.iteritems()]) #normalize
             min_freq = min(FREQ.itervalues())
             logger.debug("dumping model to file cache %s" % cache_file)
             try:
                 tmp_suffix = "."+str(random.random())
-                with open(cache_file+tmp_suffix,'wb') as temp_cache_file:
+                cache_file = 'dict' + tmp_suffix + '.cache'
+                cache_file = os.path.join(tempfile.gettempdir(), cache_file)
+                with open(cache_file,'wb') as temp_cache_file:
                     marshal.dump((trie,FREQ,total,min_freq),temp_cache_file)
-                if os.name=='nt':
-                    import shutil
-                    replace_file = shutil.move
-                else:
-                    replace_file = os.rename
-                replace_file(cache_file+tmp_suffix,cache_file)
+                if cache_exists:
+                    bucket.delete_object('jieba.cache')
+                bucket.put_object('jieba.cache', open(cache_file, 'rb'))
             except:
                 logger.error("dump cache file failed.")
                 logger.exception("")
@@ -134,7 +143,7 @@ def __cut_all(sentence):
     for k,L in dag.iteritems():
         if len(L)==1 and k>old_j:
             yield sentence[k:L[0]+1]
-            old_j = L[0] 
+            old_j = L[0]
         else:
             for j in L:
                 if j>k:
@@ -195,7 +204,7 @@ def __cut_DAG_NO_HMM(sentence):
             if len(buf)>0:
                 yield buf
                 buf = u''
-            yield l_word        
+            yield l_word
             x =y
     if len(buf)>0:
         yield buf
@@ -227,7 +236,7 @@ def __cut_DAG(sentence):
                         for elem in buf:
                             yield elem
                     buf=u''
-            yield l_word        
+            yield l_word
         x =y
 
     if len(buf)>0:
@@ -351,7 +360,7 @@ def enable_parallel(processnum=None):
     def pcut(sentence,cut_all=False,HMM=True):
         parts = re.compile('([\r\n]+)').split(sentence)
         if cut_all:
-            result = pool.map(__lcut_all,parts) 
+            result = pool.map(__lcut_all,parts)
         else:
             if HMM:
                 result = pool.map(__lcut,parts)
@@ -397,7 +406,7 @@ def tokenize(unicode_sentence,mode="default",HMM=True):
     #mode ("default" or "search")
     if not isinstance(unicode_sentence, unicode):
         raise Exception("jieba: the input parameter should  unicode.")
-    start = 0 
+    start = 0
     if mode=='default':
         for w in cut(unicode_sentence,HMM=HMM):
             width = len(w)

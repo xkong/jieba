@@ -5,6 +5,16 @@ saejieba
     * 将jieba.cache改为存放在SAE Storage中。
     * 将dict.txt改为存放在SAE Storage中。
 
+
+使用说明
+========
+* 在你的SAE控制面板中启用Storage服务，并且创建domain.
+* 在你的应用的settings.py中，指定 STORAGE_BUCKET_NAME 为刚刚创建的domain名。
+* 上传upload_to_storage中的文件到你的Storage刚刚创建的domain中，传到根目录下。
+* 如果你要自定义自己的词典，那么在jieba/__init__.py中，修改DICTIONARY为你的字典名称。
+其他使用方法参见作者的使用方法。
+
+
 以下是原作者的README
 jieba
 ========
